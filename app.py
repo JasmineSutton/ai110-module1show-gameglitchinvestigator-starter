@@ -1,6 +1,30 @@
+import json
 import random
+from pathlib import Path
+
 import streamlit as st
 from logic_utils import check_guess, validate_guess_bounds
+
+
+#REFACTORED: Added high score feature that survives app restarts.
+HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
+
+
+def load_high_score() -> int:
+    try:
+        if not HIGH_SCORE_FILE.exists():
+            return 0
+        payload = json.loads(HIGH_SCORE_FILE.read_text(encoding="utf-8"))
+        value = int(payload.get("best_score", 0))
+        return max(0, value)
+    except Exception:
+        return 0
+
+
+def save_high_score(score: int) -> None:
+    payload = {"best_score": max(0, int(score))}
+    HIGH_SCORE_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
 
 def get_range_for_difficulty(difficulty: str):
     if difficulty == "Easy":
@@ -89,6 +113,12 @@ if "status" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
+if "high_score" not in st.session_state:
+    st.session_state.high_score = load_high_score()
+
+#REFACTORED: Added persistent high score display in sidebar.
+st.sidebar.metric("High Score", st.session_state.high_score)
+
 st.subheader("Make a guess")
 
 #FIXED: Use the active difficulty bounds in the prompt text.
@@ -167,6 +197,12 @@ if submit:
             if outcome == "Win":
                 st.balloons()
                 st.session_state.status = "won"
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
                 st.success(
                     f"You won! The secret was {st.session_state.secret}. "
                     f"Final score: {st.session_state.score}"
