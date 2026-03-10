@@ -31,6 +31,20 @@ It wrote the code, ran away, and now the game is unplayable.
    Allowing users to guess numbers out of bounds, attempts allowed not being accurate functionally, the hints were reversed.
 - [x] Explain what fixes you applied.
 
+## Secure Coding Implementations 
+
+**STRIDE Threat Model**  
+I've implemented the following security methodologies:
+
+- **D (Denial of Service):** Added per-session rate limiting with a cooldown (0.20s between submits) and a rolling window cap (4 submits per 60 seconds) to prevent spam/abuse of the game state.
+
+- **R (Repudiation):** Implemented session audit trail (`event_log`) that records all security-relevant events: `submit`, `rate_limited_cooldown`, `rate_limited_window`, `new_game`, `win`, and `loss` with timestamps for accountability.
+
+**Additional STRIDE Considerations (Design-Level, Not Implemented):**
+- **T (Tampering):** High-score file (`high_score.json`) is trusted local input; could be hardened via signed hashes, file-level ACLs, or SQLite integrity constraints.
+- **S (Spoofing):** No user identity model; score ownership is unverifiable. Could add local login, device ID binding, or server-issued session tokens.
+- **I (Information Disclosure):** Debug panel exposes secret number intentionally (for dev workflow); could gate behind a `DEBUG_MODE` flag if deployed.
+- **E (Elevation of Privilege):** Debug actions (reset state, reveal answer) are unrestricted. Could add role-based access control (RBAC) for privileged actions.
 
 ## 📸 Demo
 

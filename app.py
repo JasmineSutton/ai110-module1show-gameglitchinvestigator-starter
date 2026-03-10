@@ -1,5 +1,6 @@
 import json
 import random
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -8,6 +9,13 @@ from logic_utils import check_guess, validate_guess_bounds
 
 #REFACTORED: Added high score feature that survives app restarts.
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
+
+#Secure Modification: Adding Rate limiting
+#FIX: Implement basic rate limiting to prevent abuse. 
+Submit_cooldown_seconds = .20
+Max_Submits_per_Window = 4
+Rate_window_seconds = 60
+
 
 
 def load_high_score() -> int:
@@ -116,6 +124,19 @@ if "history" not in st.session_state:
 if "high_score" not in st.session_state:
     st.session_state.high_score = load_high_score()
 
+#Secure Modification: Persist submit timing state for cooldown and rolling window limits.
+#FIX: Track timestamps in session state so rate limiting is per active user session.
+if "last_submit_ts" not in st.session_state:
+    st.session_state.last_submit_ts = 0.0
+
+if "submit_timestamps" not in st.session_state:
+    st.session_state.submit_timestamps = []
+
+#Secure Modification: Add lightweight audit trail for security-relevant user actions.
+#FIX: Use event_log entries for submit attempts, rate-limit blocks, and end-game outcomes.
+if "event_log" not in st.session_state:
+    st.session_state.event_log = []
+
 #REFACTORED: Added persistent high score display in sidebar.
 st.sidebar.metric("High Score", st.session_state.high_score)
 
@@ -133,6 +154,7 @@ with st.expander("Developer Debug Info"):
     st.write("Score:", st.session_state.score)
     st.write("Difficulty:", difficulty)
     st.write("History:", st.session_state.history)
+    st.write("Event Log:", st.session_state.event_log)
 
 raw_guess = st.text_input(
     "Enter your guess:",
@@ -150,6 +172,15 @@ with col3:
 if new_game:
     st.session_state.attempts = 0
     st.session_state.secret = random.randint(1, 100)
+    st.session_state.last_submit_ts = 0.0
+    st.session_state.submit_timestamps = []
+    st.session_state.event_log.append(
+        {
+            "event": "new_game",
+            "at": time.time(),
+            "difficulty": difficulty,
+        }
+    )
     st.success("New game started.")
     st.rerun()
 
@@ -163,6 +194,50 @@ if st.session_state.status != "playing":
 # FIXME: First guess is not being processed. Score is not updating on first guess.
 #FIX: Refactored logic into logic_utils.py using Copilot Agent mode
 if submit:
+    now = time.monotonic()
+
+    #Secure Modification: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        st.session_state.event_log.append(
+            {
+                "event": "rate_limited_cooldown",
+                "at": time.time(),
+                "attempts": st.session_state.attempts,
+            }
+        )
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Modification: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_Window:
+        st.session_state.event_log.append(
+            {
+                "event": "rate_limited_window",
+                "at": time.time(),
+                "attempts": st.session_state.attempts,
+                "window_seconds": Rate_window_seconds,
+            }
+        )
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    st.session_state.event_log.append(
+        {
+            "event": "submit",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+    )
+
     ok, guess_int, err = parse_guess(raw_guess)
 
     if not ok:
@@ -197,6 +272,14 @@ if submit:
             if outcome == "Win":
                 st.balloons()
                 st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
 
                 #REFACTORED: Save new best score to disk whenever a higher score is achieved.
                 if st.session_state.score > st.session_state.high_score:
@@ -210,6 +293,14 @@ if submit:
             else:
                 if st.session_state.attempts >= attempt_limit:
                     st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
                     st.error(
                         f"Out of attempts! "
                         f"The secret was {st.session_state.secret}. "
