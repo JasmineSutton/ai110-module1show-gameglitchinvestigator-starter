@@ -10,7 +10,7 @@ from logic_utils import check_guess, validate_guess_bounds
 #REFACTORED: Added high score feature that survives app restarts.
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
 
-#Secure Modification: Adding Rate limiting
+#Secure Refactor: Adding Rate limiting
 #FIX: Implement basic rate limiting to prevent abuse. 
 Submit_cooldown_seconds = .20
 Max_Submits_per_Window = 4
@@ -124,7 +124,7 @@ if "history" not in st.session_state:
 if "high_score" not in st.session_state:
     st.session_state.high_score = load_high_score()
 
-#Secure Modification: Persist submit timing state for cooldown and rolling window limits.
+#Secure Refactor: Persist submit timing state for cooldown and rolling window limits.
 #FIX: Track timestamps in session state so rate limiting is per active user session.
 if "last_submit_ts" not in st.session_state:
     st.session_state.last_submit_ts = 0.0
@@ -132,7 +132,7 @@ if "last_submit_ts" not in st.session_state:
 if "submit_timestamps" not in st.session_state:
     st.session_state.submit_timestamps = []
 
-#Secure Modification: Add lightweight audit trail for security-relevant user actions.
+#Secure Refactor: Add lightweight audit trail for security-relevant user actions.
 #FIX: Use event_log entries for submit attempts, rate-limit blocks, and end-game outcomes.
 if "event_log" not in st.session_state:
     st.session_state.event_log = []
@@ -196,7 +196,7 @@ if st.session_state.status != "playing":
 if submit:
     now = time.monotonic()
 
-    #Secure Modification: Enforce minimum delay between submit actions.
+    #Secure Refactor: Enforce minimum delay between submit actions.
     #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
     if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
         st.session_state.event_log.append(
@@ -209,7 +209,7 @@ if submit:
         st.error("You're clicking too fast. Please wait a moment.")
         st.stop()
 
-    #Secure Modification: Enforce rolling submit window per session.
+    #Secure Refactor: Enforce rolling submit window per session.
     #FIX: Keep only timestamps inside the active window and reject if cap is reached.
     cutoff = now - Rate_window_seconds
     st.session_state.submit_timestamps = [
