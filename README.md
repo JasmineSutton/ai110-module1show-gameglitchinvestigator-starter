@@ -24,7 +24,7 @@ The main hardening work in this project focused on:
 - `app.py` - Streamlit interface and security control flow
 - `tests/test_game_logic.py` - gameplay tests
 - `Security.md` - detailed security hardening writeup
-- case study document - recruiter-facing summary of the hardening work
+- case study document - summary of the hardening work
 
 ## Running the project
 
