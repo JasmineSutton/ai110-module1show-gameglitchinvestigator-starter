@@ -7,6 +7,7 @@ flowchart LR
     subgraph Runtime
         SS[Session State\nst.session_state]
         GL[Game Logic\nlogic_utils.py]
+        AI[AI Model/API\n(OpenAI: Hints & Feedback)]
     end
 
     subgraph Storage
@@ -29,6 +30,12 @@ flowchart LR
     GL -->|stores best score| HS
     UI -->|writes event entries| EL
     UI -->|writes feedback entries| FB
+
+    %% AI Integration
+    UI -- "request hint/feedback" --> AI
+    GL -- "request hint/feedback" --> AI
+    AI -- "AI hint & guess pattern feedback" --> UI
+    AI -- "log AI outputs for reliability" --> EL
 
     T -->|validates logic and reliability| GL
     CI -->|runs test suite| T
