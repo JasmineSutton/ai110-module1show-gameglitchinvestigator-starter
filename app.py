@@ -1,3 +1,29 @@
+# --- Human Feedback Mechanism ---
+FEEDBACK_FILE = Path(__file__).with_name("feedback.jsonl")
+
+st.sidebar.header("Feedback")
+feedback_text = st.sidebar.text_area("Share your feedback or suggestions:")
+if st.sidebar.button("Submit Feedback"):
+    feedback_entry = {
+        "feedback": feedback_text,
+        "at": time.time(),
+    }
+    try:
+        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(feedback_entry) + "\n")
+        st.sidebar.success("Thank you for your feedback!")
+    except Exception:
+        st.sidebar.error("Failed to save feedback.")
+# Persistent event log file
+EVENT_LOG_FILE = Path(__file__).with_name("event_log.jsonl")
+
+# Function to persist event log to file (append mode)
+def persist_event_log(event):
+    try:
+        with open(EVENT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception as e:
+        pass  # Optionally, handle/log file write errors
 import json
 import random
 import time
@@ -174,13 +200,13 @@ if new_game:
     st.session_state.secret = random.randint(1, 100)
     st.session_state.last_submit_ts = 0.0
     st.session_state.submit_timestamps = []
-    st.session_state.event_log.append(
-        {
-            "event": "new_game",
-            "at": time.time(),
-            "difficulty": difficulty,
-        }
-    )
+    event = {
+        "event": "new_game",
+        "at": time.time(),
+        "difficulty": difficulty,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
     st.success("New game started.")
     st.rerun()
 
@@ -199,13 +225,13 @@ if submit:
     #Secure Refactor: Enforce minimum delay between submit actions.
     #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
     if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
-        st.session_state.event_log.append(
-            {
-                "event": "rate_limited_cooldown",
-                "at": time.time(),
-                "attempts": st.session_state.attempts,
-            }
-        )
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
         st.error("You're clicking too fast. Please wait a moment.")
         st.stop()
 
@@ -217,26 +243,26 @@ if submit:
     ]
 
     if len(st.session_state.submit_timestamps) >= Max_Submits_per_Window:
-        st.session_state.event_log.append(
-            {
-                "event": "rate_limited_window",
-                "at": time.time(),
-                "attempts": st.session_state.attempts,
-                "window_seconds": Rate_window_seconds,
-            }
-        )
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
         st.error("Rate limit reached. Please wait before submitting again.")
         st.stop()
 
     st.session_state.submit_timestamps.append(now)
     st.session_state.last_submit_ts = now
-    st.session_state.event_log.append(
-        {
-            "event": "submit",
-            "at": time.time(),
-            "attempts": st.session_state.attempts,
-        }
-    )
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
 
     ok, guess_int, err = parse_guess(raw_guess)
 
