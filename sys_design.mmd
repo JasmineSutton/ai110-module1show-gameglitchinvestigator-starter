@@ -1,0 +1,38 @@
+flowchart LR
+    subgraph Frontend
+        U[User]
+        UI[Streamlit UI\napp.py]
+    end
+
+    subgraph Runtime
+        SS[Session State\nst.session_state]
+        GL[Game Logic\nlogic_utils.py]
+    end
+
+    subgraph Storage
+        HS[(high_score.json)]
+        EL[(event_log.jsonl)]
+        FB[(feedback.jsonl)]
+    end
+
+    subgraph Quality
+        T[Automated Tests\ntests/test_game_logic.py]
+        CI[GitHub Actions]
+        HE[Human Evaluation]
+    end
+
+    U -->|guesses, feedback| UI
+    UI -->|updates state| SS
+    UI -->|routes actions| GL
+    GL -->|reads/writes score, attempts, status| SS
+
+    GL -->|stores best score| HS
+    UI -->|writes event entries| EL
+    UI -->|writes feedback entries| FB
+
+    T -->|validates logic and reliability| GL
+    CI -->|runs test suite| T
+
+    HE -->|reviews logs and feedback| EL
+    HE -->|reviews logs and feedback| FB
+    HE -->|manual UI testing| UI

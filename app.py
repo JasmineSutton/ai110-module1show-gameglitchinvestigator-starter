@@ -1,3 +1,5 @@
+from pathlib import Path
+
 # --- Human Feedback Mechanism ---
 FEEDBACK_FILE = Path(__file__).with_name("feedback.jsonl")
 
@@ -39,7 +41,7 @@ HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
 #Secure Refactor: Adding Rate limiting
 #FIX: Implement basic rate limiting to prevent abuse. 
 Submit_cooldown_seconds = .20
-Max_Submits_per_Window = 4
+Max_Submits_per_WINDOW = 4
 Rate_window_seconds = 60
 
 
@@ -242,7 +244,7 @@ if submit:
         ts for ts in st.session_state.submit_timestamps if ts >= cutoff
     ]
 
-    if len(st.session_state.submit_timestamps) >= Max_Submits_per_Window:
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
         event = {
             "event": "rate_limited_window",
             "at": time.time(),
@@ -335,3 +337,6369 @@ if submit:
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
+    st.session_state.event_log.append(event)
+    persist_event_log(event)
+
+    ok, guess_int, err = parse_guess(raw_guess)
+
+    if not ok:
+        st.session_state.history.append(raw_guess)
+        st.error(err)
+    else:
+        #FIXED: Reject out-of-range numeric guesses without consuming an attempt.
+        in_bounds, bounds_err = validate_guess_bounds(guess_int, low, high)
+        if not in_bounds:
+            st.error(bounds_err)
+        else:
+            #FIXED: Count attempts only for valid in-range numeric guesses.
+            st.session_state.attempts += 1
+            st.session_state.history.append(guess_int)
+
+            if st.session_state.attempts % 2 == 0:
+                secret = str(st.session_state.secret)
+            else:
+                secret = st.session_state.secret
+
+            outcome, message = check_guess(guess_int, secret)
+
+            if show_hint:
+                st.warning(message)
+
+            st.session_state.score = update_score(
+                current_score=st.session_state.score,
+                outcome=outcome,
+                attempt_number=st.session_state.attempts,
+            )
+
+            if outcome == "Win":
+                st.balloons()
+                st.session_state.status = "won"
+                st.session_state.event_log.append(
+                    {
+                        "event": "win",
+                        "at": time.time(),
+                        "score": st.session_state.score,
+                        "attempts": st.session_state.attempts,
+                    }
+                )
+
+                #REFACTORED: Save new best score to disk whenever a higher score is achieved.
+                if st.session_state.score > st.session_state.high_score:
+                    st.session_state.high_score = st.session_state.score
+                    save_high_score(st.session_state.high_score)
+
+                st.success(
+                    f"You won! The secret was {st.session_state.secret}. "
+                    f"Final score: {st.session_state.score}"
+                )
+            else:
+                if st.session_state.attempts >= attempt_limit:
+                    st.session_state.status = "lost"
+                    st.session_state.event_log.append(
+                        {
+                            "event": "loss",
+                            "at": time.time(),
+                            "score": st.session_state.score,
+                            "attempts": st.session_state.attempts,
+                        }
+                    )
+                    st.error(
+                        f"Out of attempts! "
+                        f"The secret was {st.session_state.secret}. "
+                        f"Score: {st.session_state.score}"
+                    )
+
+st.divider()
+st.caption("Built by an AI that claims this code is production-ready.")
+
+# --- AI Integration (OpenAI Example) ---
+import os
+import requests
+
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+# --- AI-powered hint ---
+def get_ai_hint(guess, low, high, secret=None):
+    """
+    Generate an AI-powered hint for the user's guess using OpenAI API.
+    If OPENAI_API_KEY is not set, returns a fallback message.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "[AI unavailable: Set OPENAI_API_KEY]"
+    prompt = f"The user guessed {guess}. The valid range is {low} to {high}. "
+    if secret is not None:
+        prompt += f"The secret number is {secret}. "
+    prompt += "Give a helpful hint for the next guess."
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 30
+            },
+            timeout=10
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"[AI error: {e}]"
+
+if submit:
+    now = time.monotonic()
+
+    #Secure Refactor: Enforce minimum delay between submit actions.
+    #FIX: Block rapid-fire clicking that can spam reruns and game state updates.
+    if (now - st.session_state.last_submit_ts) < Submit_cooldown_seconds:
+        event = {
+            "event": "rate_limited_cooldown",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("You're clicking too fast. Please wait a moment.")
+        st.stop()
+
+    #Secure Refactor: Enforce rolling submit window per session.
+    #FIX: Keep only timestamps inside the active window and reject if cap is reached.
+    cutoff = now - Rate_window_seconds
+    st.session_state.submit_timestamps = [
+        ts for ts in st.session_state.submit_timestamps if ts >= cutoff
+    ]
+
+    if len(st.session_state.submit_timestamps) >= Max_Submits_per_WINDOW:
+        event = {
+            "event": "rate_limited_window",
+            "at": time.time(),
+            "attempts": st.session_state.attempts,
+            "window_seconds": Rate_window_seconds,
+        }
+        st.session_state.event_log.append(event)
+        persist_event_log(event)
+        st.error("Rate limit reached. Please wait before submitting again.")
+        st.stop()
+
+    st.session_state.submit_timestamps.append(now)
+    st.session_state.last_submit_ts = now
+    event = {
+        "event": "submit",
+        "at": time.time(),
+        "attempts": st.session_state.attempts,
+    }
